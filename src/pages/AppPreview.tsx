@@ -1,213 +1,157 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useAppConfig } from "@/hooks/useAppConfig";
+import { AirtableAPI, AirtableRecord, AirtableTable } from "@/lib/airtable";
+import { Sidebar, SidebarProvider, SidebarTrigger, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, Loader2, FileText, AlertCircle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Database, Settings, Share2 } from "lucide-react";
 import ListView from "@/components/DataBlocks/ListView";
 import TableView from "@/components/DataBlocks/TableView";
+import FormView from "@/components/DataBlocks/FormView";
 
 const AppPreview = () => {
+  const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const [selectedRecord, setSelectedRecord] = useState<any>(null);
+  const { getConfig, loading: appConfigLoading } = useAppConfig();
 
-  const handleRecordClick = (record: any) => {
-    setSelectedRecord(record);
+  const config = useMemo(() => {
+    if (appConfigLoading || !appId) return null;
+    return getConfig(appId);
+  }, [appId, appConfigLoading, getConfig]);
+
+  const [activePageId, setActivePageId] = useState<string | null>(null);
+  const [records, setRecords] = useState<AirtableRecord[]>([]);
+  const [tableSchema, setTableSchema] = useState<AirtableTable | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const airtableApi = useMemo(() => {
+    if (config?.airtableConfig.token) {
+      return new AirtableAPI(config.airtableConfig.token);
+    }
+    return null;
+  }, [config]);
+
+  const activePage = useMemo(() => {
+    return config?.pages.find(p => p.id === activePageId) || null;
+  }, [config, activePageId]);
+
+  useEffect(() => {
+    if (config && config.pages.length > 0 && !activePageId) {
+      setActivePageId(config.pages[0].id);
+    }
+  }, [config, activePageId]);
+
+  const fetchDataForPage = useCallback(async () => {
+    if (!airtableApi || !config || !activePage || !config.airtableConfig.baseId) return;
+
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [recordsData, tablesData] = await Promise.all([
+        airtableApi.getRecords(config.airtableConfig.baseId, activePage.tableId),
+        airtableApi.getBaseTables(config.airtableConfig.baseId)
+      ]);
+      setRecords(recordsData.records);
+      const currentTable = tablesData.find(t => t.id === activePage.tableId);
+      setTableSchema(currentTable || null);
+    } catch (err) {
+      const errorMessage = (err as Error).message;
+      setError(`Failed to fetch data: ${errorMessage}. Check your configuration and token permissions.`);
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [airtableApi, config, activePage]);
+
+  useEffect(() => {
+    fetchDataForPage();
+  }, [fetchDataForPage]);
+
+  if (appConfigLoading) {
+    return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>;
+  }
+
+  if (!config) {
+    return <div className="flex h-screen items-center justify-center">App configuration not found.</div>;
+  }
+  
+  const ActivePageComponent = () => {
+      if (isLoading) return <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin" /> <span className="ml-2">Loading Data...</span></div>;
+      if (error) return (
+        <div className="p-4 text-center text-destructive bg-destructive/10 rounded-lg">
+          <AlertCircle className="w-6 h-6 mx-auto mb-2" />
+          <p className="font-semibold">An Error Occurred</p>
+          <p className="text-sm">{error}</p>
+        </div>
+      );
+      if (!activePage || !tableSchema) return <div className="p-4 text-center text-muted-foreground">Select a page to begin.</div>;
+      
+      if (activePage.views.length === 0) {
+        return <div className="p-4 text-center text-muted-foreground">This page has no views configured. Add a view in the app configuration.</div>;
+      }
+
+      return (
+        <Tabs defaultValue={activePage.views[0].id} className="w-full">
+          <TabsList>
+            {activePage.views.map(view => (
+              <TabsTrigger key={view.id} value={view.id}>{view.name}</TabsTrigger>
+            ))}
+          </TabsList>
+          {activePage.views.map(view => (
+            <TabsContent key={view.id} value={view.id} className="mt-4">
+              {view.type === 'list' && <ListView data={records} view={view} tableFields={tableSchema.fields} />}
+              {view.type === 'table' && <TableView data={records} fields={tableSchema.fields.map(f => f.name)} />}
+              {view.type === 'form' && airtableApi && config && (
+                <FormView 
+                  airtableApi={airtableApi} 
+                  baseId={config.airtableConfig.baseId} 
+                  table={tableSchema}
+                  view={view}
+                  onSuccess={fetchDataForPage}
+                />
+              )}
+              {view.type === 'gallery' && <div className="p-4 text-center">Gallery view coming soon!</div>}
+            </TabsContent>
+          ))}
+        </Tabs>
+      )
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b bg-card shadow-card">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button variant="outline" size="sm" onClick={() => navigate("/")}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Dashboard
-              </Button>
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 bg-gradient-accent rounded-lg flex items-center justify-center">
-                  <Database className="w-5 h-5 text-accent-foreground" />
-                </div>
-                <div>
-                  <h1 className="text-xl font-bold">Acme Corp Dashboard</h1>
-                  <p className="text-sm text-muted-foreground">Client Application Preview</p>
-                </div>
-              </div>
+    <SidebarProvider>
+        <Sidebar>
+            <SidebarHeader>
+                <h2 className="text-lg font-semibold">{config.branding.appName}</h2>
+            </SidebarHeader>
+            <SidebarContent>
+                <SidebarMenu>
+                    {config.pages.map(page => (
+                        <SidebarMenuItem key={page.id}>
+                            <SidebarMenuButton isActive={page.id === activePageId} onClick={() => setActivePageId(page.id)}>
+                                <FileText className="w-4 h-4" />
+                                {page.name}
+                            </SidebarMenuButton>
+                        </SidebarMenuItem>
+                    ))}
+                </SidebarMenu>
+            </SidebarContent>
+        </Sidebar>
+        <main className="flex-1">
+            <header className="p-4 border-b flex items-center justify-between">
+                <SidebarTrigger />
+                <h1 className="text-xl font-semibold">{activePage?.name || "Select a page"}</h1>
+                <Button variant="outline" onClick={() => navigate(`/configure/${appId}`)}>
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Back to Config
+                </Button>
+            </header>
+            <div className="p-4 lg:p-6">
+                <ActivePageComponent />
             </div>
-            <div className="flex items-center space-x-3">
-              <Badge variant="success">
-                Live Preview
-              </Badge>
-              <Button variant="outline" size="sm">
-                <Settings className="w-4 h-4 mr-2" />
-                Configure
-              </Button>
-              <Button variant="primary" size="sm">
-                <Share2 className="w-4 h-4 mr-2" />
-                Deploy
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="container mx-auto px-6 py-8">
-        {!selectedRecord ? (
-          /* Main Data Views */
-          <div className="space-y-8">
-            {/* Client App Hero */}
-            <div className="text-center py-12 px-6 bg-gradient-secondary rounded-3xl">
-              <h2 className="text-3xl font-bold mb-4">Welcome to Acme Corp</h2>
-              <p className="text-lg text-muted-foreground mb-6 max-w-2xl mx-auto">
-                Manage your projects, track progress, and collaborate with your team
-              </p>
-              <div className="flex justify-center space-x-4">
-                <Badge variant="outline" className="px-3 py-1">
-                  5 Active Projects
-                </Badge>
-                <Badge variant="outline" className="px-3 py-1">
-                  12 Team Members
-                </Badge>
-                <Badge variant="outline" className="px-3 py-1">
-                  98% On Time
-                </Badge>
-              </div>
-            </div>
-
-            {/* Data Block Tabs */}
-            <Tabs defaultValue="list" className="space-y-6">
-              <div className="flex justify-between items-center">
-                <TabsList>
-                  <TabsTrigger value="list">List View</TabsTrigger>
-                  <TabsTrigger value="table">Table View</TabsTrigger>
-                </TabsList>
-                <div className="text-sm text-muted-foreground">
-                  Connected to Airtable • Last sync: 2 minutes ago
-                </div>
-              </div>
-
-              <TabsContent value="list">
-                <ListView onRecordClick={handleRecordClick} />
-              </TabsContent>
-
-              <TabsContent value="table">
-                <TableView onRecordClick={handleRecordClick} />
-              </TabsContent>
-            </Tabs>
-          </div>
-        ) : (
-          /* Record Details View */
-          <div className="space-y-6">
-            <div className="flex items-center space-x-4">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => setSelectedRecord(null)}
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to List
-              </Button>
-              <h2 className="text-2xl font-bold">{selectedRecord.Name}</h2>
-              <Badge variant="success">
-                {selectedRecord.Status}
-              </Badge>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card className="shadow-card">
-                <CardHeader>
-                  <CardTitle>Project Details</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground">Status</label>
-                      <Badge variant="success" className="block w-fit mt-1">
-                        {selectedRecord.Status}
-                      </Badge>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground">Priority</label>
-                      <p className={`font-medium mt-1 ${
-                        selectedRecord.Priority === "High" ? "text-destructive" :
-                        selectedRecord.Priority === "Medium" ? "text-primary" : "text-success"
-                      }`}>
-                        {selectedRecord.Priority}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground">Created</label>
-                      <p className="mt-1">{selectedRecord.Created}</p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-muted-foreground">Project ID</label>
-                      <p className="mt-1 font-mono text-sm">#{selectedRecord.id}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="shadow-card">
-                <CardHeader>
-                  <CardTitle>Actions</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Button variant="primary" className="w-full">
-                    Update Status
-                  </Button>
-                  <Button variant="outline" className="w-full">
-                    Edit Project
-                  </Button>
-                  <Button variant="outline" className="w-full">
-                    View Timeline
-                  </Button>
-                  <Button variant="outline" className="w-full">
-                    Export Data
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Additional Details */}
-            <Card className="shadow-card">
-              <CardHeader>
-                <CardTitle>Project Description</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground">
-                  This is a sample project description that would typically be pulled from your Airtable data. 
-                  You can customize which fields are displayed and how they're formatted in the Agency Builder configuration.
-                </p>
-                <div className="mt-6 flex space-x-4">
-                  <div className="flex-1">
-                    <label className="text-sm font-medium text-muted-foreground">Team Members</label>
-                    <div className="flex space-x-2 mt-2">
-                      {["JD", "AS", "MK"].map((initials, i) => (
-                        <div key={i} className="w-8 h-8 bg-gradient-primary rounded-full flex items-center justify-center text-xs font-medium text-primary-foreground">
-                          {initials}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-sm font-medium text-muted-foreground">Progress</label>
-                    <div className="mt-2">
-                      <div className="w-full bg-secondary rounded-full h-2">
-                        <div className="bg-gradient-primary h-2 rounded-full" style={{ width: "65%" }}></div>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">65% Complete</p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-      </div>
-    </div>
+        </main>
+    </SidebarProvider>
   );
 };
 

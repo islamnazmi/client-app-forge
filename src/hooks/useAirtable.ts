@@ -113,15 +113,20 @@ export const useAirtable = () => {
   const [api, setApi] = useState<AirtableAPI | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [token, setToken] = useState<string>('');
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
   // Load token from localStorage on mount
   useEffect(() => {
-    const savedToken = localStorage.getItem('airtable_token');
-    if (savedToken) {
-      setToken(savedToken);
-      setApi(new AirtableAPI(savedToken));
-      setIsConnected(true);
+    try {
+      const savedToken = localStorage.getItem('airtable_token');
+      if (savedToken) {
+        setToken(savedToken);
+        setApi(new AirtableAPI(savedToken));
+        setIsConnected(true);
+      }
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -171,5 +176,6 @@ export const useAirtable = () => {
     token,
     connect,
     disconnect,
+    loading,
   };
 };
